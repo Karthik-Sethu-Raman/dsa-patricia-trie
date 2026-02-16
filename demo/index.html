@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Patricia Trie Firewall Demo</title>
+    <style>
+        :root {
+            --primary: #2563eb;
+            --success: #16a34a;
+            --danger: #dc2626;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --border: #e2e8f0;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg);
+            color: #1e293b;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.5;
+        }
+
+        h1, h2, h3 { color: #0f172a; }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 5px;
+            font-size: 0.9em;
+        }
+
+        input, select, button {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        button {
+            cursor: pointer;
+            font-weight: 600;
+            transition: 0.2s;
+        }
+
+        button.btn-primary { background: var(--primary); color: white; border: none; }
+        button.btn-primary:hover { background: #1d4ed8; }
+        
+        button.btn-test { background: var(--success); color: white; border: none; }
+        button.btn-test:hover { background: #15803d; }
+
+        /* Tree Visualization */
+        .tree-container {
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+            white-space: pre;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            padding: 15px;
+            border-radius: 8px;
+            min-height: 300px;
+        }
+
+        .tree-node { color: #60a5fa; }
+        .tree-terminal { color: #facc15; font-weight: bold; }
+        .tree-data { color: #4ade80; }
+        .tree-connector { color: #6b7280; }
+
+        /* Logs */
+        .log-box {
+            background: #0f172a;
+            color: #ecfdf5;
+            padding: 15px;
+            border-radius: 8px;
+            height: 150px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 13px;
+        }
+        .log-entry { margin-bottom: 5px; border-bottom: 1px solid #334155; padding-bottom: 2px; }
+        .log-allow { color: #4ade80; }
+        .log-block { color: #f87171; }
+    </style>
+</head>
+<body>
+
+    <h1>🛡️ Patricia Trie Firewall Demo</h1>
+    <p>This interactive tool demonstrates the C++ logic. It uses a <b>Radix Tree</b> to store IP rules efficiently using path compression.</p>
+
+    <div class="container">
+        <div>
+            <div class="card">
+                <h2>1. Configure Rules</h2>
+                <div class="control-group">
+                    <label>IP Address (e.g., 192.168.1.55)</label>
+                    <input type="text" id="ruleIp" placeholder="192.168.1.55" value="192.168.1.55">
+                    
+                    <label>Action</label>
+                    <select id="ruleAction">
+                        <option value="BLOCK">BLOCK (Deny)</option>
+                        <option value="ALLOW">ALLOW (Permit)</option>
+                    </select>
+                    
+                    <button class="btn-primary" onclick="addRule()">+ Add Rule to Trie</button>
+                    <button onclick="loadDefaults()">↺ Reset to Demo Defaults</button>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top: 20px;">
+                <h2>3. Test Packet</h2>
+                <div class="control-group">
+                    <label>Incoming IP Address</label>
+                    <input type="text" id="testIp" placeholder="192.255.0.1" value="192.255.0.1">
+                    <button class="btn-test" onclick="testPacket()">Check Firewall</button>
+                </div>
+                <h3>Result:</h3>
+                <div id="testResult" class="log-box"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>2. Tree Visualization</h2>
+            <p style="font-size: 0.9em; color: #64748b;">
+                Notice how the bits are <b>compressed</b>. We don't store 32 nodes for an IP.<br>
+                <span style="color: #60a5fa">Blue</span> = Compressed Path (Bits)<br>
+                <span style="color: #4ade80">Green</span> = Rule Action
+            </p>
+            <div id="treeOutput" class="tree-container"></div>
+        </div>
+    </div>
+
+<script>
+    // ==========================================
+    // JS PORT OF C++ LOGIC
+    // ==========================================
+
+    class PatriciaNode {
+        constructor(key = "", is_terminal = false, data = "") {
+            this.key = key;           // Compressed bits
+            this.is_terminal = is_terminal;
+            this.data = data;         // "ALLOW" / "BLOCK"
+            this.children = {};       // Map<char, PatriciaNode>
+        }
+    }
+
+    class FirewallRadixTree {
+        constructor() {
+            this.root = new PatriciaNode();
+        }
+
+        getCommonPrefix(s1, s2) {
+            let minLen = Math.min(s1.length, s2.length);
+            let i = 0;
+            while (i < minLen && s1[i] === s2[i]) {
+                i++;
+            }
+            return s1.substring(0, i);
+        }
+
+        insert(ip_binary, action) {
+            let node = this.root;
+            let path = ip_binary;
+
+            while (true) {
+                let matched = false;
+
+                // Check children
+                for (let char in node.children) {
+                    let child = node.children[char];
+                    let childKey = child.key;
+
+                    // Exact prefix match (path starts with childKey)
+                    if (path.indexOf(childKey) === 0) {
+                        node = child;
+                        path = path.substring(childKey.length);
+
+                        if (path === "") {
+                            node.is_terminal = true;
+                            node.data = action;
+                            return;
+                        }
+                        matched = true;
+                        break; // Break inner for-loop, continue while-loop
+                    }
+
+                    // Partial match check
+                    let common = this.getCommonPrefix(path, childKey);
+                    if (common.length > 0) {
+                        // We found a split point!
+                        
+                        // 1. Remove old child
+                        delete node.children[char];
+
+                        // 2. Create split node
+                        let splitNode = new PatriciaNode(common);
+                        node.children[common[0]] = splitNode;
+
+                        // 3. Adjust old child
+                        let remainingOld = childKey.substring(common.length);
+                        child.key = remainingOld;
+                        splitNode.children[remainingOld[0]] = child;
+
+                        // 4. Continue insertion from split node
+                        node = splitNode;
+                        path = path.substring(common.length);
+                        matched = false; // Force re-evaluation loop
+                        
+                        // We broke the edge, restart loop from new 'node'
+                        // In JS, breaking here exits the for-loop, 
+                        // and we re-enter the while loop with the new 'node'
+                        matched = true; // Technically we matched "part", so we don't trigger the "no match" block below
+                        break; 
+                    }
+                }
+
+                // If we split, the loop restarts. If we matched fully, loop restarts.
+                // If we simply fell through without matching anything:
+                
+                // Logic check: The C++ code breaks logic slightly differently than typical JS structure.
+                // Re-aligning with C++ logic exactly:
+                
+                // If we found a partial match (split), we updated 'node' and 'path' and set matched=true to avoid the block below.
+                // But we need to ensure we don't double-insert.
+                
+                // Let's simplify the port for JS readability while keeping logic:
+                if (matched) continue;
+
+                // No match found -> Insert remaining path as new leaf
+                if (path.length > 0) {
+                    let newNode = new PatriciaNode(path, true, action);
+                    node.children[path[0]] = newNode;
+                } else {
+                    node.is_terminal = true;
+                    node.data = action;
+                }
+                return;
+            }
+        }
+
+        search(ip_binary) {
+            let node = this.root;
+            let path = ip_binary;
+            let last_match = "DEFAULT_DENY"; // Default firewall rule
+
+            while (true) {
+                if (node.is_terminal) {
+                    last_match = node.data;
+                }
+
+                if (path === "") break;
+
+                let found = false;
+                for (let char in node.children) {
+                    let child = node.children[char];
+                    if (path.indexOf(child.key) === 0) {
+                        path = path.substring(child.key.length);
+                        node = child;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) break;
+            }
+            return last_match;
+        }
+    }
+
+    // ==========================================
+    // UTILITIES & UI
+    // ==========================================
+
+    const fw = new FirewallRadixTree();
+
+    function ipToBinary(ip) {
+        return ip.split('.').map(octet => {
+            let bin = parseInt(octet).toString(2);
+            return "00000000".substring(bin.length) + bin;
+        }).join('');
+    }
+
+    function renderTree(node, prefix = "", isRoot = true) {
+        if (!node) node = fw.root;
+        
+        let html = "";
+        
+        // Don't print root key (it's empty)
+        if (!isRoot) {
+            let labelClass = node.is_terminal ? "tree-terminal" : "tree-node";
+            let ruleText = node.is_terminal ? `<span class="tree-data"> -> ${node.data}</span>` : "";
+            html += `${prefix}<span class="tree-connector">|--</span> <span class="${labelClass}">${node.key}</span>${ruleText}\n`;
+        }
+
+        let childPrefix = isRoot ? "" : prefix + "   ";
+        
+        for (let char in node.children) {
+            html += renderTree(node.children[char], childPrefix, false);
+        }
+        return html;
+    }
+
+    function updateTreeVisual() {
+        const container = document.getElementById("treeOutput");
+        let treeHtml = renderTree();
+        if(treeHtml.trim() === "") treeHtml = "(Tree is empty)";
+        container.innerHTML = treeHtml;
+    }
+
+    function addRule() {
+        const ip = document.getElementById("ruleIp").value;
+        const action = document.getElementById("ruleAction").value;
+        const bin = ipToBinary(ip);
+        
+        fw.insert(bin, action);
+        updateTreeVisual();
+        logResult(`Added Rule: ${ip} -> ${action}`);
+    }
+
+    function testPacket() {
+        const ip = document.getElementById("testIp").value;
+        const bin = ipToBinary(ip);
+        const result = fw.search(bin);
+        
+        let colorClass = result.includes("ALLOW") ? "log-allow" : "log-block";
+        if(result === "DEFAULT_DENY") colorClass = "log-block";
+
+        const logHtml = `<div class="log-entry">Packet: <b>${ip}</b> <br> Binary: <span style="font-size:10px">${bin}</span> <br> Result: <b class="${colorClass}">${result}</b></div>`;
+        
+        const resBox = document.getElementById("testResult");
+        resBox.innerHTML = logHtml + resBox.innerHTML;
+    }
+
+    function logResult(msg) {
+        // Optional console logging
+        console.log(msg);
+    }
+
+    function loadDefaults() {
+        // Clear tree (hacky way for demo)
+        fw.root = new PatriciaNode();
+        
+        // 1. Office Network (192.0.0.0/8) -> 11000000
+        // We use just the first 8 bits to simulate a CIDR block
+        let officeBin = "11000000"; 
+        fw.insert(officeBin, "ALLOW (Office Network)");
+
+        // 2. Malicious IP (192.168.1.55) -> Full 32 bits
+        let malBin = ipToBinary("192.168.1.55");
+        fw.insert(malBin, "BLOCK (Malicious Host)");
+
+        updateTreeVisual();
+        document.getElementById("testResult").innerHTML = '<div class="log-entry"><i>Defaults loaded.</i></div>';
+    }
+
+    // Initialize
+    loadDefaults();
+
+</script>
+
+</body>
+</html>
