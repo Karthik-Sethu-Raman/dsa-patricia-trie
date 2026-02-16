@@ -1,0 +1,37 @@
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.plo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Executables
+*.exe
+*.out
+*.app
+patricia_trie
+a.out
+
+# Debugging
+*.dSYM/
+*.su
+
+# Build Directories (if you use CMake later)
+build/
+bin/
+obj/
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+
+# IDE and Editor Configuration
+.vscode/
+.idea/
+*.swp
+*~
